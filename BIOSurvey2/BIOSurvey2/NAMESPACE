@@ -1,0 +1,18 @@
+exportPattern(Association.plot,Association.test,boot.strata,Domain.est,ECDF.strata,ECDF.strata.plot,
+identify.influential.plot,influential.strata,post.stratify,print.assoc,print.boot,print.strata,
+print.domain.est,qqnorm.boot,Stratify,summary.assoc,summary.boot,summary.domain.est,summary.post.stratify,summary.strata)
+
+  importFrom("graphics", "identify", "plot", "title")
+  importFrom("stats", "na.omit", "pnorm", "qnorm", "qqline", "qqnorm",
+             "qt", "quantile", "rbinom", "var")
+
+S3method(print, strata)
+S3method(summary, strata)
+S3method(print, assoc)
+S3method(print, boot)
+S3method(summary, boot)
+S3method(qqnorm, boot)
+S3method(print, domain.est)
+S3method(summary, domain.est)
+S3method(identify,influential.plot)
+S3method(summary, post.stratify)

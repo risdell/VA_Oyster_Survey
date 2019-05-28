@@ -1,0 +1,19 @@
+Package: BIOSurvey2
+Type: Package
+Title: A set of R functions to analyze data from stratified random
+        fishery surveys
+Version: 1.0-1
+Date: 2017-01-31
+Author: Stephen J. Smith 
+Maintainer: Stephen J. Smith <smithsj@eastlink.ca>
+Depends: R (>= 3.3.0)
+Description: R version of SPLUS functions originally written in 1996 and described in:
+	Smith, S.J. (1996). Analysis of bottom trawl survey data, In  Assessment of groundfish
+	stocks based on bottom trawl survey results. H. Lassen (Ed.) NAFO Scientific Council Studies. 28: 25--53.
+        These functions are identical to R package BIOSurvey with the addition of functions for post-stratification 
+        domain estimates.
+License: GPL (>= 2)
+LazyData: Yes
+NeedsCompilation: no
+Packaged: 2017-02-08 18:44:35 UTC; smith
+RoxygenNote: 6.1.0
