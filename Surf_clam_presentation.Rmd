@@ -1,0 +1,1899 @@
+---
+title: "Oyster Survey Effort Reallocation and Restratification"
+author: "Robert Isdell"
+date: "July 21, 2019"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 175)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE, fig.align = 'center')
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results=FALSE, comment=FALSE}
+# Install BIOSurvey2 package
+devtools::install("BIOSurvey2/BIOSurvey2")
+
+# Load in required packages
+pacman::p_load(tidyverse, readxl, BIOSurvey2, cluster, fpc, random, knitr)
+
+# Read in data by year
+site.info <- read_xlsx("Data/PTData_2006_2018.xlsx",1)
+site.info <- site.info[1:199,] #trim off extra from the end
+dat.2006 <- read_xlsx("Data/PTData_2006_2018.xlsx",2)
+dat.2007 <- read_xlsx("Data/PTData_2006_2018.xlsx",3)
+dat.2008 <- read_xlsx("Data/PTData_2006_2018.xlsx",4)
+dat.2009 <- read_xlsx("Data/PTData_2006_2018.xlsx",5)
+dat.2010 <- read_xlsx("Data/PTData_2006_2018.xlsx",6)
+dat.2011 <- read_xlsx("Data/PTData_2006_2018.xlsx",7)
+dat.2012 <- read_xlsx("Data/PTData_2006_2018.xlsx",8)
+dat.2013 <- read_xlsx("Data/PTData_2006_2018.xlsx",9)
+dat.2014 <- read_xlsx("Data/PTData_2006_2018.xlsx",10)
+dat.2015 <- read_xlsx("Data/PTData_2006_2018.xlsx",11)
+dat.2016 <- read_xlsx("Data/PTData_2006_2018.xlsx",12)
+dat.2017 <- read_xlsx("Data/PTData_2006_2018.xlsx",13)
+dat.2018 <- read_xlsx("Data/PTData_2006_2018.xlsx",14)
+
+# Add year variable to each dataset
+dat.2006$Year <- 2006
+dat.2007$Year <- 2007
+dat.2008$Year <- 2008
+dat.2009$Year <- 2009
+dat.2010$Year <- 2010
+dat.2011$Year <- 2011
+dat.2012$Year <- 2012
+dat.2013$Year <- 2013
+dat.2014$Year <- 2014
+dat.2015$Year <- 2015
+dat.2016$Year <- 2016
+dat.2017$Year <- 2017
+dat.2018$Year <- 2018
+
+# merge all of the datasets into single dataframe
+dat.years <- rbind(dat.2006, dat.2007, dat.2008, dat.2009, dat.2010, dat.2011, dat.2012,
+                   dat.2013, dat.2014, dat.2015, dat.2016, dat.2017, dat.2018)
+
+# Correct and merge various river names for continuity
+dat.years$River_name[dat.years$River_name == "Mobjack"] <- "Mobjack Bay"
+dat.years$River_name[dat.years$River_name == "Great Wicomico"] <- "Great Wicomico River"
+dat.years$River_name[dat.years$River_name == "Piankatank"] <- "Piankatank River"
+dat.years$River_name[dat.years$River_name == "Rappahannock"] <- "Rappahannock River"
+dat.years$River_name[dat.years$River_name == "Elizabeth River Western Branch"] <- "Elizabeth River"
+dat.years$River_name[dat.years$River_name == "Corrotoman River"] <- "Rappahannock River"
+dat.years$River_name[dat.years$River_name == "Elizabeth River"] <- "James River"
+dat.years$River_name[dat.years$River_name == "Lafayette River"] <- "James River"
+dat.years$River_name[dat.years$River_name == "East River"] <- "York River"
+dat.years$River_name[dat.years$River_name == "Mobjack Bay"] <- "York River"
+dat.years$River_name[dat.years$River_name == "Pocomoke Sound"] <- "Tangier Sound"
+dat.years$Station_ID[dat.years$Station_ID == 390] <- 395
+dat.years$Station_ID[dat.years$Station_ID == 1131] <- 1128
+
+# Select only relevant fields from site.info
+site.acres <- site.info %>% 
+  select(`Station ID`, `Management Subgroups`, Total, n_years)
+
+# Convert Station ID field to numeric
+site.acres$`Station ID` <- as.numeric(site.acres$`Station ID`)
+
+# Join the site.acres dataset to the full dataset
+dat.full <- left_join(dat.years, site.acres, by = c("Station_ID" = "Station ID"))
+
+## Select stations with 5+ years of data
+dat.full <- dat.full %>% 
+  filter(n_years > 4)
+```
+
+The following document summarizes our efforts-to-date to restratify and reallocate effort within the annual oyster survey. This work has relied heavily on the R package **BioSurvey2** written by the late Stephen Smith and distributed by SCeMFIS ([http://www.scemfis.org/](http://www.scemfis.org/)).
+
+#Introduction
+
+![](Figures/Study_area.jpg)
+
+Since 1993:
+
+* 199 Reefs
+* 8 regions
+* ~1,000 person hours year^-1^
+* 1.2 million oysters measured
+
+![](Figures/ISDELL_Survey-optimization.jpg)
+
+
+#James River
+
+The James River did not have predefined management subgroups, and so was stratified using the k-means method.
+
+```{r}
+# Subset the James River data
+all.james.dat <- dat.full %>% 
+  filter(River_name == "James River" & Station_ID != 16) # Reef 16 now defunct, split into 410 and 411
+
+# Create a vector of unique station IDs within the James
+all.james.stations <- unique(all.james.dat$Station_ID)
+
+# Make Station ID the same for both datasets
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+
+# Subset the James River site info
+all.james.site.info <- site.acres %>% 
+  filter(Station_ID %in% all.james.stations) %>% 
+  arrange(Station_ID)
+all.james.site.info$Station_ID <- as.numeric(all.james.site.info$Station_ID)
+
+# Multiply counts by subsample factor
+all.james.dat$Lives <- rowSums(all.james.dat[,16:52]*all.james.dat$Subsample_Factor)
+all.james.dat$Markets <- rowSums(all.james.dat[,31:52]*all.james.dat$Subsample_Factor)
+all.james.dat$Spat1 <- rowSums(all.james.dat[,55:67]*all.james.dat$Subsample_Factor)
+
+# Select only the variables needed for analysis
+all.james.dat <- all.james.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+```
+
+##Set up strata and summarize
+The following table provides the number of grabs from each reef from 2006-2018 (Observed) and the number of grabs over that same time frame, given the same total effort within the James, that would have best addressed total catch and the variability of the catch relative to the area of the reef.
+```{r}
+# Specify Strata and total number of possible samples (NH = Reef acreage * years sampled * 4046.86 m^2/acre)
+all.james.strata <- data.frame("Strata" = all.james.site.info$Station_ID, NH = all.james.site.info$Total*4046.86)
+
+# Check current allocation using BIOSurvey2::Stratify()
+all.james.numbers <- Stratify(all.james.dat, all.james.strata, "Station_ID", species = "Lives")
+kable(summary(all.james.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3])
+```
+
+
+```{r}
+# Store the summary output
+all.james.numbers.summary <- summary(all.james.numbers, effic = TRUE, nopt = TRUE)
+
+# Extract the optimal number of samples per strata
+all.james.numbers.nopt <- all.james.numbers.summary$n.opt
+
+# Join the optimal sample numbers to the site info
+all.james.reallocation <- left_join(all.james.numbers.nopt, site.info, by = c("Strata" = as.character("Station_ID")))
+
+# Specify the column names
+names(site.acres) <- c("Station_ID", "Subgroup", "Acreage", "Years")
+
+# Set Station ID to numeric
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+
+# Join James counts and site info
+all.james.full <- left_join(all.james.dat, site.acres, by = "Station_ID")
+
+# Create a dataset of the mean and variance of Live counts, and reef acreage
+all.james.mva <- all.james.full %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives), Acreage = mean(Acreage))
+row.names(all.james.mva) <- all.james.mva$Station_ID
+
+# Scale and center the mva to prep for clustering
+all.james.mva <- scale(all.james.mva)
+
+```
+
+
+##Clustering
+One way to address the effort reallocation problem is to rexamine the current stratification, and see if we can reduce the number of strata while still getting accurate estimates of the mean and variation of the population within each strata. To do this, we can see if certain reefs cluster together based on similar features. I used the mean and variance of live oysters within each reef, and the acreage of each reef as factors for a K-means clustering analysis. 
+
+```{r, fig.align='center', fig.height=5, fig.width=7}
+# Identify best number of k-means cluster groups by finding inflection point
+# Iterate 100 times to avoid chances of spurious result
+all.james.wss <- matrix(nrow = 100, ncol = 15)
+for(j in 1:100) {
+  wss <- (nrow(all.james.mva[,2:4])-1)*sum(apply(all.james.mva[,2:4], 2, var))
+  for (i in 1:15) all.james.wss[j,i] <- sum(kmeans(all.james.mva[,2:4], centers = i, iter.max = 1000, nstart = 1)$withinss)
+}
+all.james.wss <- as.data.frame(all.james.wss)
+all.james.wss.mean <- colMeans(all.james.wss)
+
+# Plot the reduction in within-group sums-of-squares per cluster
+plot(1:15, all.james.wss.mean, type = "b", xlab = "Number of Clusters", 
+     ylab = "Within groups SS")
+
+
+#################################################################
+k <- 4 # number of clusters
+#################################################################
+```
+
+In the above plot, you can see that the inflection point in the line indicates that based on these features, the 36 reefs within the James could be most confidently grouped into 4 clusters.
+
+```{r, fig.align='center', fig.height=5}
+# Check 1000 seeds to identify which provides the best clustering
+best.seed <- matrix(nrow = 1000, ncol = 2)
+for (i in 1:1000){
+  set.seed(i)
+  fit <- kmeans(all.james.mva[,2:4], k, iter.max = 1000, nstart = 1, algorithm = "Hartigan-Wong")
+  best.seed[i,1] <- i
+  best.seed[i,2] <- fit$betweenss/fit$totss*100
+}
+best.seed <- as.data.frame(best.seed)
+seed <- best.seed$V1[best.seed$V2 == max(best.seed$V2)][1]
+set.seed(seed)
+
+# Cluster the reefs
+fit.all.james <- kmeans(all.james.mva[,2:4], k, iter.max = 1000, nstart = 1, algorithm = "Hartigan-Wong")
+
+# Create a dataset of the Station IDs and cluster groups
+all.james.cluster.groups <- data.frame("Station_ID" = as.numeric(rownames(all.james.mva)))
+all.james.cluster.groups$kmeans <- fit.all.james$cluster
+
+# Generate a cluster plot of the results
+clusplot(all.james.mva[,2:4], all.james.cluster.groups$kmeans, color = T, shade = T, labels = 2, lines = 0)
+```
+
+This plot shows how well those reefs cluster.
+
+```{r}
+# Show what cluster group each reef will be in
+a2 <- fit.all.james$cluster
+suggested.strata.all.james <- data_frame("Code" = as.numeric(names(a2)), "Cluster" = a2)
+site.name <- dat.full %>% 
+  select(Station_ID, Full_station_name) %>% 
+  mutate("Code" = Station_ID) %>% 
+  select(Code, Full_station_name)
+site.name <- site.name[!duplicated(site.name),]
+suggested.strata.all.james <- left_join(suggested.strata.all.james, site.name, by = "Code") %>% 
+  arrange(Cluster)
+kable(suggested.strata.all.james, caption = "Suggested Strata")
+```
+
+
+##Add new suggested groups and check allocation
+```{r}
+# Create new dataset of cluster groups as strata
+names(all.james.site.info) <- c("Station_ID", "Subgroup", "NH")
+all.james.site.info$NH <- all.james.site.info$NH*4046.86 #convert acres to square meters
+all.james.site.info$Station_ID <- as.character(all.james.site.info$Station_ID)
+all.james.site.info2 <- data.frame(all.james.site.info)
+all.james.domain <- data_frame(NH = all.james.site.info$NH, 
+                           "kmeans" = all.james.cluster.groups$kmeans)
+#Summarize NH by new strata (aka domains)
+all.james.domain.info <- all.james.domain %>% 
+  group_by(kmeans) %>% 
+  summarise(NH = mean(NH))
+all.james.domain.info2 <- data.frame(all.james.domain.info)
+
+all.james.dat2 <- left_join(all.james.dat, all.james.cluster.groups)
+all.james.dat2 <- arrange(all.james.dat2, Station_ID)
+all.james.dat2$Station_ID <- as.character(all.james.dat2$Station_ID)
+all.james.dat3 <- data.frame(all.james.dat2)
+
+all.james.site.info2 <- data.frame(all.james.site.info)
+# length(all.james.site.info2[, "Station_ID"])
+# length(SFA29.Geophysical[, "GEOPHYS_ID"])
+```
+
+
+How well is effort allocated based on current strata?
+
+```{r}
+# How well is effort allocated based on current strata?
+names(all.james.domain.info2) <- c("Strata","NH")
+all.james.numbers2 <- Stratify(all.james.dat3, all.james.domain.info2, "kmeans", species = "Lives")
+kable(summary(all.james.numbers2, effic = T, nopt = T)$n.opt)
+```
+
+Overall, effort allocation is inefficient within the new strata.
+
+
+##Estimate the population mean and variance given the new strata and allocation
+###Simulate the data
+We can resample the data at the proportions suggested by BIOSurvey2, sequentially reduce the effort by 10% across all strata, and then plot the results. We are effectively creating 100 datasets per proportional effort reduction for a total of 1000 datasets. Each one is the result of resampling (with replacement). Then, we can plot the mean of each strata within the datasets for each proportional effort reduction, and get a sense of what the spread in the data would look like. By plotting the 95% CI of the data, a wedge forms as the estimates become less accurate with increasing proportional reduction. Identifying the point where our overall interpretation of the data remains more-or-less the same while maximixing effort reduction should provide support for how much we could reduce effort within a given waterbody.
+
+
+```{r}
+# Create a blank dataframe for the mean, SD, and variance of each cluster group
+# sampled (with replacement) 100 times at the optimal level suggested by BIOSurvey2
+varest.boot.dat.all.james <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.all.james) <- c("kmeans", "MEAN", "SD", "VAR")
+varest.boot.dat.all.james <- as.data.frame(varest.boot.dat.all.james)
+
+# Cummulative number of samples for each cluster
+n.opt.test.cumm.all.james <- cumsum(summary(all.james.numbers2, effic = T, nopt = T)$n.opt$Optimal[1:k])
+
+# Optimal number of samples per cluster
+n.opt.test.all.james <- summary(all.james.numbers2, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+# Identify the starting position for each cluster in the dataframe
+start.pos.all.james <- c(1, n.opt.test.cumm.all.james[1:k-1]+1)
+
+# Blank dataframe of the BIOSurvey2::Stratify() output for each resampled dataset
+nopt.boot.dat.all.james <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.all.james) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.all.james <- as.data.frame(nopt.boot.dat.all.james)
+
+# Start and end position for each cluster summary in varest.boot.dat.all.james
+j.start.all.james <- seq(1,k*100, by = k)
+j.end.all.james <- seq(k, k*100, by = k)
+
+# Estimating the mean and variance of 100 resampled datasets at the original effort level
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.all.james[k])
+  colnames(sub.dat1) <- names(all.james.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- all.james.dat3 %>% 
+      filter(kmeans == i)
+    rand.n <- sample(1:nrow(temp),n.opt.test.all.james[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.all.james[i]:n.opt.test.cumm.all.james[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(kmeans) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.all.james[j.start.all.james[j]:j.end.all.james[j],] <- sub.summary
+}
+#kable(head(varest.boot.dat.all.james, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r, warning=FALSE}
+# Same as section above, except with sequential 10% reduction in effort from 0% to 90% reduction
+all.james.sample <- n.opt.test.all.james
+all.james.sample.cumm <- n.opt.test.cumm.all.james
+
+all.james.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(all.james.plot.dat) <- c("ER","KMEAN", "MEAN")
+all.james.plot.dat <- as.data.frame(all.james.plot.dat)
+all.james.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+all.james.plot.dat$KMEAN <- rep(1:k, 1000)
+all.james.plot.dat$KMEAN <- factor(all.james.plot.dat$KMEAN)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+all.james.sub.sample <- all.james.sample/sum(all.james.sample)
+all.james.sub.cumm <- round(seq(1, 0.1, by = -0.1)*all.james.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("kmeans", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(all.james.sub.sample*all.james.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = all.james.sub.cumm[h])
+    colnames(sub.dat1) <- names(all.james.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- all.james.dat3 %>% 
+        filter(kmeans == i)
+      rand.n <- sample(1:nrow(temp),round(all.james.sub.sample[i]*all.james.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(kmeans) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  all.james.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+#kable(head(all.james.plot.dat, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+# Create a function to calculate the mean and CI of the mean
+mean_ci <- function(x, mult = 1) {  
+  x <- na.omit(x)
+  SD <- mult * sd(x)
+  MEAN <- mean(x)
+  data.frame(y = MEAN, ymin = MEAN - qt(1 - (0.05 / 2), 99) * SD, ymax = MEAN + qt(1 - (0.05 / 2), 99) * SD)
+}
+
+# Plot the change in quality of the data with each sequential reduction in effort
+ggplot(all.james.plot.dat, aes(y = MEAN, x = ER, colour = KMEAN, fill = KMEAN)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  geom_abline(intercept = c(148,163,366,415,30,36, 27, 32),
+              size = 1, linetype = "dashed", alpha = 0.7) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+In this plot, you can see that the mean and CI remain relatively constant through a 40% reduction in effort. 
+
+```{r}
+# Population summary for each cluster
+strat.kmeans.summary.all.james <- all.james.dat3 %>% 
+  group_by(kmeans) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.all.james, caption = "Population Stats based on all data")
+
+all.james.ci.summary <- all.james.plot.dat %>% 
+  group_by(ER, KMEAN) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN) %>% 
+  arrange(KMEAN, ER)
+kable(all.james.ci.summary, caption = "Mean of the means")
+```
+
+Based on the information above, it appears that the total effort in Burwell Bay could be reduced by 40% and still obtain similar population parameters. Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+n.reefs <- suggested.strata.all.james %>% 
+  group_by(Cluster) %>% 
+  summarise(N = n())
+n.suggested <- round(all.james.sub.sample*all.james.sub.cumm[5]/13,0)
+effort <- 1:k
+for (i in 1:k) {
+  effort[i] <- ifelse(n.suggested[i] < n.reefs$N[i], n.reefs$N[i], n.suggested[i])
+}
+kable(data_frame("Cluster" = 1:k, "Future Effort" = effort,
+                 "Current Effort" = round(summary(all.james.numbers2, effic = TRUE, nopt = TRUE)$n.opt[,2][1:4]/13,0)))
+```
+
+This would mean a total of 310 grabs in the James Bay compared to 518 in previous years.
+
+#Lynnhaven River
+
+Lynnhaven remains unchanged from the previous iteration. If you all decide to continue, then there's no need to restratify given how few reefs are down there and that it's a full day either way. However, if you do continue sampling, BIOSurvey2 does recommend reallocating effort.
+```{r, echo=FALSE}
+lynnhaven.dat <- dat.full %>% 
+  filter(River_name == "Lynnhaven")
+lynnhaven.stations <- unique(lynnhaven.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+lynnhaven.site.info <- site.acres %>% 
+  filter(Station_ID %in% lynnhaven.stations) %>% 
+  arrange(Station_ID)
+lynnhaven.site.info$Station_ID <- as.numeric(lynnhaven.site.info$Station_ID)
+
+lynnhaven.dat$Lives <- rowSums(lynnhaven.dat[,16:52]*lynnhaven.dat$Subsample_Factor)
+lynnhaven.dat$Markets <- rowSums(lynnhaven.dat[,31:52]*lynnhaven.dat$Subsample_Factor)
+lynnhaven.dat$Spat1 <- rowSums(lynnhaven.dat[,55:67]*lynnhaven.dat$Subsample_Factor)
+
+lynnhaven.dat <- lynnhaven.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+```
+
+##Set up strata and summarize
+
+```{r, echo=FALSE}
+lynnhaven.strata <- data_frame("Strata" = lynnhaven.site.info$Station_ID, NH = lynnhaven.site.info$Acreage*4046.86)
+
+lynnhaven.numbers <- Stratify(lynnhaven.dat, lynnhaven.strata, "Station_ID", species = "Lives")
+kable(summary(lynnhaven.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3])
+```
+
+
+Each year, total effort (i.e., number of grabs) in each reef would be as follows:
+```{r, echo=FALSE}
+lynnhaven.summary <- summary(lynnhaven.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3]
+lynnhaven.summary <- mutate(lynnhaven.summary, `Annual Effort` = ifelse(Optimal/13 < 1, 1, ceiling(Optimal/13)))
+
+kable(lynnhaven.summary[1:12,c(1,4)])
+```
+
+This would be a total of 78 grabs per year in the Lynnhaven.
+
+#Rappahannock River
+
+The Rappahannock has predefined management subgroups, thereby making any cluster analyses unneccesary. The results shown here demonstrate how the effort should be allocated among management subgroups.
+```{r}
+Rappahannock.dat <- dat.full %>% 
+  filter(River_name == "Rappahannock River")
+Rappahannock.stations <- unique(Rappahannock.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+Rappahannock.site.info <- site.acres %>% 
+  filter(Station_ID %in% Rappahannock.stations) %>% 
+  arrange(Station_ID)
+Rappahannock.site.info$Station_ID <- as.numeric(Rappahannock.site.info$Station_ID)
+Rappahannock.site.info2 <- Rappahannock.site.info %>% 
+  group_by(Subgroup) %>% 
+  summarise(Acreage2 = sum(Acreage))
+
+Rappahannock.dat$Lives <- rowSums(Rappahannock.dat[,16:52]*Rappahannock.dat$Subsample_Factor)
+Rappahannock.dat$Markets <- rowSums(Rappahannock.dat[,31:52]*Rappahannock.dat$Subsample_Factor)
+Rappahannock.dat$Spat1 <- rowSums(Rappahannock.dat[,55:67]*Rappahannock.dat$Subsample_Factor)
+
+Rappahannock.dat <- Rappahannock.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+Rappahannock.dat <- left_join(Rappahannock.dat, Rappahannock.site.info)
+```
+
+##Set up strata and summarize
+
+```{r}
+Rappahannock.sites <- site.info %>%
+  filter(Station_ID %in% Rappahannock.stations) %>% 
+  select(Station_ID, Site, `Management Subgroups`) %>% 
+  arrange(`Management Subgroups`)
+kable(Rappahannock.sites, caption = "Rappahannock Reef and Management Subgroup")
+```
+
+
+```{r}
+Rappahannock.strata <- data_frame("Strata" = Rappahannock.site.info2$Subgroup, NH = Rappahannock.site.info2$Acreage2*4046.86)
+
+Rappahannock.numbers <- Stratify(Rappahannock.dat, Rappahannock.strata, "Subgroup", species = "Lives")
+kable(summary(Rappahannock.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3], caption = "Observed vs. Optimal Effort")
+```
+
+
+```{r}
+
+Rappahannock.numbers.summary <- summary(Rappahannock.numbers, effic = TRUE, nopt = TRUE)
+Rappahannock.numbers.nopt <- Rappahannock.numbers.summary$n.opt
+
+Rappahannock.reallocation <- left_join(Rappahannock.numbers.nopt, site.info, by = c("Strata" = as.character("Management Subgroups")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+Rappahannock.full <- left_join(Rappahannock.dat, site.acres, by = "Station_ID")
+```
+
+
+##Estimate the population mean and variance given the new strata and allocation
+```{r}
+k <- length(unique(Rappahannock.dat$Subgroup))
+
+Rappahannock.dat3 <- Rappahannock.dat %>% 
+  select(1:6)
+
+varest.boot.dat.Rappahannock <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.Rappahannock) <- c("Subgroup", "MEAN", "SD", "VAR")
+varest.boot.dat.Rappahannock <- as.data.frame(varest.boot.dat.Rappahannock)
+n.opt.test.cumm.Rappahannock <- cumsum(summary(Rappahannock.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k])
+n.opt.test.Rappahannock <- summary(Rappahannock.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+start.pos.Rappahannock <- c(1, n.opt.test.cumm.Rappahannock[1:k-1]+1)
+
+nopt.boot.dat.Rappahannock <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.Rappahannock) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.Rappahannock <- as.data.frame(nopt.boot.dat.Rappahannock)
+j.start.Rappahannock <- seq(1,k*100, by = k)
+j.end.Rappahannock <- seq(k, k*100, by = k)
+
+subgroup.Rappahannock <- sort(unique(Rappahannock.dat3$Subgroup))
+
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.Rappahannock[k])
+  colnames(sub.dat1) <- names(Rappahannock.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- Rappahannock.dat3 %>% 
+      filter(Subgroup == subgroup.Rappahannock[i])
+    rand.n <- sample(1:nrow(temp),n.opt.test.Rappahannock[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.Rappahannock[i]:n.opt.test.cumm.Rappahannock[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(Subgroup) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.Rappahannock[j.start.Rappahannock[j]:j.end.Rappahannock[j],] <- sub.summary
+}
+```
+
+```{r}
+Rappahannock.sample <- n.opt.test.Rappahannock
+Rappahannock.sample.cumm <- n.opt.test.cumm.Rappahannock
+
+Rappahannock.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(Rappahannock.plot.dat) <- c("ER","Subgroup", "MEAN")
+Rappahannock.plot.dat <- as.data.frame(Rappahannock.plot.dat)
+Rappahannock.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+Rappahannock.plot.dat$Subgroup <- rep(subgroup.Rappahannock, 1000)
+Rappahannock.plot.dat$Subgroup <- factor(Rappahannock.plot.dat$Subgroup)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+Rappahannock.sub.sample <- Rappahannock.sample/sum(Rappahannock.sample)
+Rappahannock.sub.cumm <- round(seq(1, 0.1, by = -0.1)*Rappahannock.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("Subgroup", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(Rappahannock.sub.sample*Rappahannock.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = Rappahannock.sub.cumm[h])
+    colnames(sub.dat1) <- names(Rappahannock.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- Rappahannock.dat3 %>% 
+        filter(Subgroup == subgroup.Rappahannock[i])
+      rand.n <- sample(1:nrow(temp),round(Rappahannock.sub.sample[i]*Rappahannock.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(Subgroup) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  Rappahannock.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+```
+
+```{r}
+ggplot(Rappahannock.plot.dat, aes(y = MEAN, x = ER, colour = Subgroup, fill = Subgroup)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+The current subgroups are *very* messy in terms of overlapping population estimates. However, it does still appear that a 40% reduction is possible in the Rappahannock.
+
+```{r}
+strat.kmeans.summary.Rappahannock <- Rappahannock.dat3 %>% 
+  group_by(Subgroup) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.Rappahannock, caption = "Population Stats based on all data")
+
+Rappahannock.ci.summary <- Rappahannock.plot.dat %>% 
+  group_by(ER, Subgroup) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN)
+# kable(Rappahannock.ci.summary, caption = "Mean of the means")
+```
+
+Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+kable(data_frame("Subgroup" = subgroup.Rappahannock, "Future Effort" = round(Rappahannock.sub.sample*Rappahannock.sub.cumm[5]/13,0), 
+                 "Current Effort" = round(summary(Rappahannock.numbers, effic = TRUE, nopt = TRUE)$n.opt[,2][1:13]/13,0)))
+```
+
+This would mean a total of 234 grabs in the Rappahannock compared to 393 in previous years. 
+
+#Piankatank River
+
+The Piankatank also lacked management subgroups, so clusters were identified.
+```{r}
+Piankatank.dat <- dat.full %>% 
+  filter(River_name == "Piankatank River")
+Piankatank.stations <- unique(Piankatank.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+Piankatank.site.info <- site.acres %>% 
+  filter(Station_ID %in% Piankatank.stations) %>% 
+  arrange(Station_ID)
+Piankatank.site.info$Station_ID <- as.numeric(Piankatank.site.info$Station_ID)
+
+Piankatank.dat$Lives <- rowSums(Piankatank.dat[,16:52]*Piankatank.dat$Subsample_Factor)
+Piankatank.dat$Markets <- rowSums(Piankatank.dat[,31:52]*Piankatank.dat$Subsample_Factor)
+Piankatank.dat$Spat1 <- rowSums(Piankatank.dat[,55:67]*Piankatank.dat$Subsample_Factor)
+
+Piankatank.dat <- Piankatank.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+```
+
+##Set up strata and summarize
+
+```{r}
+Piankatank.strata <- data_frame("Strata" = Piankatank.site.info$Station_ID, NH = Piankatank.site.info$Acreage*4046.86)
+
+Piankatank.numbers <- Stratify(Piankatank.dat, Piankatank.strata, "Station_ID", species = "Lives")
+kable(summary(Piankatank.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3], caption = "Observed vs. Optimal Effort")
+```
+
+
+```{r}
+
+Piankatank.numbers.summary <- summary(Piankatank.numbers, effic = TRUE, nopt = TRUE)
+Piankatank.numbers.nopt <- Piankatank.numbers.summary$n.opt
+
+Piankatank.reallocation <- left_join(Piankatank.numbers.nopt, site.info, by = c("Strata" = as.character("Station_ID")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+Piankatank.full <- left_join(Piankatank.dat, site.acres, by = "Station_ID")
+
+Piankatank.mv <- Piankatank.full %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives))
+
+Piankatank.mv2 <- Piankatank.dat %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives))
+Piankatank.site.info$Station_ID <- as.numeric(Piankatank.site.info$Station_ID)
+Piankatank.for.mclust <- left_join(Piankatank.mv2, Piankatank.site.info, by=c("Station_ID" = "Station_ID"))
+row.names(Piankatank.for.mclust) <- Piankatank.for.mclust$Station_ID
+
+Piankatank.mva <- Piankatank.full %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives), Acreage = mean(Acreage))
+row.names(Piankatank.mva) <- Piankatank.mva$Station_ID
+
+Piankatank.mva <- scale(Piankatank.mva)
+
+```
+
+
+##Clustering
+
+
+```{r, fig.align='center', fig.height=5, fig.width=7}
+
+Piankatank.wss <- matrix(nrow = 100, ncol = 10)
+for(j in 1:100) {
+  wss <- (nrow(Piankatank.mva[,2:4])-1)*sum(apply(Piankatank.mva[,2:4], 2, var))
+  for (i in 1:10) Piankatank.wss[j,i] <- sum(kmeans(Piankatank.mva[,2:4], centers = i, iter.max = 1000, nstart = 1)$withinss)
+}
+Piankatank.wss <- as.data.frame(Piankatank.wss)
+Piankatank.wss.mean <- colMeans(Piankatank.wss)
+
+
+plot(1:10, Piankatank.wss.mean, type = "b", xlab = "Number of Clusters", 
+     ylab = "Within groups SS")
+#################################################################
+k <- 3
+#################################################################
+
+
+```
+
+
+```{r, fig.align='center', fig.height=5}
+best.seed <- matrix(nrow = 1000, ncol = 2)
+for (i in 1:1000){
+  set.seed(i)
+  fit <- kmeans(Piankatank.mva[,2:4], k, iter.max = 1000, nstart = 1, algorithm = "Hartigan-Wong")
+  best.seed[i,1] <- i
+  best.seed[i,2] <- fit$betweenss/fit$totss*100
+}
+best.seed <- as.data.frame(best.seed)
+seed <- best.seed$V1[best.seed$V2 == max(best.seed$V2)][1]
+set.seed(seed)
+fit.Piankatank <- kmeans(Piankatank.mva[,2:4], k, iter.max = 1000, nstart = 1, algorithm = "Hartigan-Wong")
+
+
+Piankatank.cluster.groups <- data.frame("Station_ID" = as.numeric(rownames(Piankatank.mva)))
+Piankatank.cluster.groups$kmeans <- fit.Piankatank$cluster
+
+clusplot(Piankatank.mva[,2:4], Piankatank.cluster.groups$kmeans, color = T, shade = T, labels = 2, lines = 0)
+
+
+```
+
+This plot shows how well those reefs cluster.
+
+```{r}
+a2 <- fit.Piankatank$cluster
+suggested.strata.Piankatank <- data_frame("Code" = as.numeric(names(a2)), "Cluster" = a2)
+site.name <- dat.full %>% 
+  select(Station_ID, Full_station_name) %>% 
+  mutate("Code" = Station_ID) %>% 
+  select(Code, Full_station_name)
+site.name <- site.name[!duplicated(site.name),]
+suggested.strata.Piankatank <- left_join(suggested.strata.Piankatank, site.name, by = "Code") %>% 
+  arrange(Cluster)
+kable(suggested.strata.Piankatank, caption = "Suggested Strata")
+```
+
+
+##Add new suggested groups
+```{r}
+names(Piankatank.site.info) <- c("Station_ID", "Subgroup", "NH")
+Piankatank.site.info$NH <- Piankatank.site.info$NH*4046.86 #convert acres to square meters
+Piankatank.site.info$Station_ID <- as.character(Piankatank.site.info$Station_ID)
+Piankatank.site.info2 <- data.frame(Piankatank.site.info)
+Piankatank.domain <- data_frame(NH = Piankatank.site.info$NH, 
+                           "kmeans" = Piankatank.cluster.groups$kmeans)
+#Summarize NH by new strata (aka domains)
+Piankatank.domain.info <- Piankatank.domain %>% 
+  group_by(kmeans) %>% 
+  summarise(NH = mean(NH))
+Piankatank.domain.info2 <- data.frame(Piankatank.domain.info)
+
+Piankatank.dat2 <- left_join(Piankatank.dat, Piankatank.cluster.groups)
+Piankatank.dat2 <- arrange(Piankatank.dat2, Station_ID)
+Piankatank.dat2$Station_ID <- as.character(Piankatank.dat2$Station_ID)
+Piankatank.dat3 <- data.frame(Piankatank.dat2)
+
+Piankatank.site.info2 <- data.frame(Piankatank.site.info)
+```
+
+
+##Testing Stratification
+
+How well is effort allocated based on current strata?
+
+```{r}
+# How well is effort allocated based on current strata?
+names(Piankatank.domain.info2) <- c("Strata","NH")
+Piankatank.numbers2 <- Stratify(Piankatank.dat3, Piankatank.domain.info2, "kmeans", species = "Lives")
+kable(summary(Piankatank.numbers2, effic = T, nopt = T)$n.opt[,1:3])
+```
+
+
+
+##Estimate the population mean and variance given the new strata and allocation
+```{r}
+varest.boot.dat.Piankatank <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.Piankatank) <- c("kmeans", "MEAN", "SD", "VAR")
+varest.boot.dat.Piankatank <- as.data.frame(varest.boot.dat.Piankatank)
+n.opt.test.cumm.Piankatank <- cumsum(summary(Piankatank.numbers2, effic = T, nopt = T)$n.opt$Optimal[1:k])
+n.opt.test.Piankatank <- summary(Piankatank.numbers2, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+start.pos.Piankatank <- c(1, n.opt.test.cumm.Piankatank[1:k-1]+1)
+
+nopt.boot.dat.Piankatank <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.Piankatank) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.Piankatank <- as.data.frame(nopt.boot.dat.Piankatank)
+j.start.Piankatank <- seq(1,k*100, by = k)
+j.end.Piankatank <- seq(k, k*100, by = k)
+
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.Piankatank[k])
+  colnames(sub.dat1) <- names(Piankatank.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- Piankatank.dat3 %>% 
+      filter(kmeans == i)
+    rand.n <- sample(1:nrow(temp),n.opt.test.Piankatank[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.Piankatank[i]:n.opt.test.cumm.Piankatank[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(kmeans) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.Piankatank[j.start.Piankatank[j]:j.end.Piankatank[j],] <- sub.summary
+}
+#kable(head(varest.boot.dat.Piankatank, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+Piankatank.sample <- n.opt.test.Piankatank
+Piankatank.sample.cumm <- n.opt.test.cumm.Piankatank
+
+Piankatank.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(Piankatank.plot.dat) <- c("ER","KMEAN", "MEAN")
+Piankatank.plot.dat <- as.data.frame(Piankatank.plot.dat)
+Piankatank.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+Piankatank.plot.dat$KMEAN <- rep(1:k, 1000)
+Piankatank.plot.dat$KMEAN <- factor(Piankatank.plot.dat$KMEAN)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+Piankatank.sub.sample <- Piankatank.sample/sum(Piankatank.sample)
+Piankatank.sub.cumm <- round(seq(1, 0.1, by = -0.1)*Piankatank.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("kmeans", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(Piankatank.sub.sample*Piankatank.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = Piankatank.sub.cumm[h])
+    colnames(sub.dat1) <- names(Piankatank.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- Piankatank.dat3 %>% 
+        filter(kmeans == i)
+      rand.n <- sample(1:nrow(temp),round(Piankatank.sub.sample[i]*Piankatank.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(kmeans) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  Piankatank.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+#kable(head(Piankatank.plot.dat, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+ggplot(Piankatank.plot.dat, aes(y = MEAN, x = ER, colour = KMEAN, fill = KMEAN)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+
+```{r}
+strat.kmeans.summary.Piankatank <- Piankatank.dat3 %>% 
+  group_by(kmeans) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.Piankatank, caption = "Population Stats based on all data")
+
+Piankatank.ci.summary <- Piankatank.plot.dat %>% 
+  group_by(ER, KMEAN) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN)
+# kable(Piankatank.ci.summary, caption = "Mean of the means")
+```
+
+Based on the information above, it appears that the total effort in the Piankatank could be reduced by 40% and still obtain similar population parameters. Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+kable(data_frame("Cluster" = 1:k, "Future Effort" = c(5,53,8),
+                 "Current Effort" = round(summary(Piankatank.numbers2, effic = T, nopt = T)$n.opt[,2][1:3]/13,0)))
+```
+
+This would mean a total of 66 grabs in the Piankatank compared to 105 in previous years. 
+
+#York River
+The York River has a combination of predefined management subgroups as well as 5 reefs outside of those subgroups. However, given that there are only 5 unassigned reefs, I clumped them together into a single group for this analysis rather than running a cluster analysis on them.
+
+```{r}
+York.dat <- dat.full %>% 
+  filter(River_name == "York River")
+York.stations <- unique(York.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+York.site.info <- site.acres %>% 
+  filter(Station_ID %in% York.stations) %>% 
+  arrange(Station_ID)
+York.site.info$Station_ID <- as.numeric(York.site.info$Station_ID)
+York.site.info2 <- York.site.info %>% 
+  group_by(Subgroup) %>% 
+  summarise(Acreage2 = sum(Acreage))
+
+York.dat$Lives <- rowSums(York.dat[,16:52]*York.dat$Subsample_Factor)
+York.dat$Markets <- rowSums(York.dat[,31:52]*York.dat$Subsample_Factor)
+York.dat$Spat1 <- rowSums(York.dat[,55:67]*York.dat$Subsample_Factor)
+
+York.dat <- York.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+York.dat <- left_join(York.dat, York.site.info)
+```
+
+##Set up strata and summarize
+
+```{r}
+york.sites <- site.info %>%
+  filter(Station_ID %in% York.stations) %>% 
+  select(Station_ID, Site, `Management Subgroups`) %>% 
+  arrange(`Management Subgroups`)
+kable(york.sites, caption = "York Reef and Management Subgroup")
+```
+
+```{r}
+York.strata <- data_frame("Strata" = York.site.info2$Subgroup, NH = York.site.info2$Acreage2*4046.86)
+#kable(head(York.strata, 10))
+York.numbers <- Stratify(York.dat, York.strata, "Subgroup", species = "Lives")
+kable(summary(York.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3], caption = "Observed vs. Optimal Effort")
+```
+
+```{r}
+
+York.numbers.summary <- summary(York.numbers, effic = TRUE, nopt = TRUE)
+York.numbers.nopt <- York.numbers.summary$n.opt
+# York.numbers.nopt
+York.reallocation <- left_join(York.numbers.nopt, site.info, by = c("Strata" = as.character("Station_ID")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+York.full <- left_join(York.dat, site.acres, by = "Station_ID")
+
+
+```
+
+
+##Estimate the population mean and variance given the new strata and allocation
+```{r}
+k <- length(unique(York.dat$Subgroup))
+
+York.dat3 <- York.dat %>% 
+  select(1:6)
+
+varest.boot.dat.York <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.York) <- c("Subgroup", "MEAN", "SD", "VAR")
+varest.boot.dat.York <- as.data.frame(varest.boot.dat.York)
+n.opt.test.cumm.York <- cumsum(summary(York.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k])
+n.opt.test.York <- summary(York.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+start.pos.York <- c(1, n.opt.test.cumm.York[1:k-1]+1)
+
+nopt.boot.dat.York <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.York) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.York <- as.data.frame(nopt.boot.dat.York)
+j.start.York <- seq(1,k*100, by = k)
+j.end.York <- seq(k, k*100, by = k)
+
+subgroup.York <- sort(unique(York.dat3$Subgroup))
+
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.York[k])
+  colnames(sub.dat1) <- names(York.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- York.dat3 %>% 
+      filter(Subgroup == subgroup.York[i])
+    rand.n <- sample(1:nrow(temp),n.opt.test.York[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.York[i]:n.opt.test.cumm.York[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(Subgroup) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.York[j.start.York[j]:j.end.York[j],] <- sub.summary
+}
+#kable(head(varest.boot.dat.Rappahannock, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+York.sample <- n.opt.test.York
+York.sample.cumm <- n.opt.test.cumm.York
+
+York.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(York.plot.dat) <- c("ER","Subgroup", "MEAN")
+York.plot.dat <- as.data.frame(York.plot.dat)
+York.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+York.plot.dat$Subgroup <- rep(subgroup.York, 1000)
+York.plot.dat$Subgroup <- factor(York.plot.dat$Subgroup)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+York.sub.sample <- York.sample/sum(York.sample)
+York.sub.cumm <- round(seq(1, 0.1, by = -0.1)*York.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("Subgroup", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(York.sub.sample*York.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = York.sub.cumm[h])
+    colnames(sub.dat1) <- names(York.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- York.dat3 %>% 
+        filter(Subgroup == subgroup.York[i])
+      rand.n <- sample(1:nrow(temp),round(York.sub.sample[i]*York.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(Subgroup) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  York.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+#kable(head(York.plot.dat, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+ggplot(York.plot.dat, aes(y = MEAN, x = ER, colour = Subgroup, fill = Subgroup)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+
+```{r}
+strat.kmeans.summary.York <- York.dat3 %>% 
+  group_by(Subgroup) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.York, caption = "Population Stats based on all data")
+
+York.ci.summary <- York.plot.dat %>% 
+  group_by(ER, Subgroup) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN)
+#kable(York.ci.summary, caption = "Mean of the means")
+```
+
+Based on the information above, it appears that the total effort in the York could be reduced by 30% and still obtain similar population parameters. However, given that it suggests you need almost no samples in the sanctuary reefs, I would suggest pulling at least 7 samples there, and then using the suggested 30% reduction and redistribution for the other locations. Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+kable(data_frame("Subgroup" = subgroup.York, "Future Effort" = c(round(York.sub.sample*York.sub.cumm[3]/13,0)[1:4], 7),
+                "Current Effort" = round(summary(York.numbers, effic = T, nopt = T)$n.opt[,2][1:5]/13,0)))
+```
+
+This would mean a total of 72 grabs in the York compared to 82 in previous years. 
+
+#Great Wicomico River
+The Great Wicomico also has both management subgroups as well as unassigned reefs. Unlike the York, however, there are several reefs that are unassigned, and so a cluster analysis was run on the unassigned, and then the new groups were added to the management subgroups.
+
+
+```{r}
+Great_Wicomico.dat <- dat.full %>% 
+  filter(River_name == "Great Wicomico River" & `Management Subgroups` == "GWNA")
+Great_Wicomico.stations <- unique(Great_Wicomico.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+Great_Wicomico.site.info <- site.acres %>% 
+  filter(Station_ID %in% Great_Wicomico.stations) %>% 
+  arrange(Station_ID)
+Great_Wicomico.site.info$Station_ID <- as.numeric(Great_Wicomico.site.info$Station_ID)
+
+Great_Wicomico.dat$Lives <- rowSums(Great_Wicomico.dat[,16:52]*Great_Wicomico.dat$Subsample_Factor)
+Great_Wicomico.dat$Markets <- rowSums(Great_Wicomico.dat[,31:52]*Great_Wicomico.dat$Subsample_Factor)
+Great_Wicomico.dat$Spat1 <- rowSums(Great_Wicomico.dat[,55:67]*Great_Wicomico.dat$Subsample_Factor)
+
+Great_Wicomico.dat <- Great_Wicomico.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+```
+
+##Set up strata and summarize
+
+```{r}
+Great_Wicomico.strata <- data_frame("Strata" = Great_Wicomico.site.info$Station_ID, NH = Great_Wicomico.site.info$Acreage*4046.86)
+#kable(head(Great_Wicomico.strata, 10))
+Great_Wicomico.numbers <- Stratify(Great_Wicomico.dat, Great_Wicomico.strata, "Station_ID", species = "Lives")
+kable(summary(Great_Wicomico.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3])
+```
+
+
+```{r}
+
+Great_Wicomico.numbers.summary <- summary(Great_Wicomico.numbers, effic = TRUE, nopt = TRUE)
+Great_Wicomico.numbers.nopt <- Great_Wicomico.numbers.summary$n.opt
+# Great_Wicomico.numbers.nopt
+Great_Wicomico.reallocation <- left_join(Great_Wicomico.numbers.nopt, site.info, by = c("Strata" = as.character("Station_ID")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+Great_Wicomico.full <- left_join(Great_Wicomico.dat, site.acres, by = "Station_ID")
+
+Great_Wicomico.mv <- Great_Wicomico.full %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives))
+
+Great_Wicomico.mv2 <- Great_Wicomico.dat %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives))
+Great_Wicomico.site.info$Station_ID <- as.numeric(Great_Wicomico.site.info$Station_ID)
+Great_Wicomico.for.mclust <- left_join(Great_Wicomico.mv2, Great_Wicomico.site.info, by=c("Station_ID" = "Station_ID"))
+row.names(Great_Wicomico.for.mclust) <- Great_Wicomico.for.mclust$Station_ID
+
+Great_Wicomico.mva <- Great_Wicomico.full %>% 
+  group_by(Station_ID) %>% 
+  summarise(Mean = mean(Lives), Variance = var(Lives), Acreage = mean(Acreage))
+row.names(Great_Wicomico.mva) <- Great_Wicomico.mva$Station_ID
+
+Great_Wicomico.mva <- scale(Great_Wicomico.mva)
+
+```
+
+
+##Clustering
+
+
+```{r, fig.align='center', fig.height=5, fig.width=7}
+Great_Wicomoco.wss <- matrix(nrow = 100, ncol = 10)
+for(j in 1:100) {
+  wss <- (nrow(Great_Wicomico.mva[,2:4])-1)*sum(apply(Great_Wicomico.mva[,2:4], 2, var))
+  for (i in 1:10) Great_Wicomoco.wss[j,i] <- sum(kmeans(Great_Wicomico.mva[,2:4], centers = i, iter.max = 1000, nstart = 1)$withinss)
+}
+Great_Wicomoco.wss <- as.data.frame(Great_Wicomoco.wss)
+Great_Wicomico.wss.mean <- colMeans(Great_Wicomoco.wss)
+
+
+plot(1:10, Great_Wicomico.wss.mean, type = "b", xlab = "Number of Clusters", 
+     ylab = "Within groups SS")
+
+#################################################################
+k <- 4
+#################################################################
+
+
+```
+
+
+```{r, fig.align='center', fig.height=5}
+best.seed <- matrix(nrow = 1000, ncol = 2)
+for (i in 1:1000){
+  set.seed(i)
+  fit <- kmeans(Great_Wicomico.mva[,2:4], k, iter.max = 1000, nstart = 1, algorithm = "Hartigan-Wong")
+  best.seed[i,1] <- i
+  best.seed[i,2] <- fit$betweenss/fit$totss*100
+}
+best.seed <- as.data.frame(best.seed)
+seed <- best.seed$V1[best.seed$V2 == max(best.seed$V2)][1]
+set.seed(seed)
+fit.Great_Wicomico <- kmeans(Great_Wicomico.mva[,2:4], k, iter.max = 1000, nstart = 1, algorithm = "Hartigan-Wong")
+# fit$cluster
+
+Great_Wicomico.cluster.groups <- data.frame("Station_ID" = as.numeric(rownames(Great_Wicomico.mva)))
+Great_Wicomico.cluster.groups$kmeans <- fit.Great_Wicomico$cluster
+# jpeg("Figures/Kmeans_with_MVA.jpg", width = 6, height = 5, units = "in", quality = 100, res = 200)
+clusplot(Great_Wicomico.mva[,2:4], Great_Wicomico.cluster.groups$kmeans, color = T, shade = T, labels = 2, lines = 0)
+# dev.off()
+
+```
+
+This plot shows how well those reefs cluster.
+
+```{r}
+a2 <- fit.Great_Wicomico$cluster
+suggested.strata.Great_Wicomico <- data_frame("Code" = as.numeric(names(a2)), "Cluster" = a2)
+site.name <- dat.full %>% 
+  select(Station_ID, Full_station_name) %>% 
+  mutate("Code" = Station_ID) %>% 
+  select(Code, Full_station_name)
+site.name <- site.name[!duplicated(site.name),]
+suggested.strata.Great_Wicomico <- left_join(suggested.strata.Great_Wicomico, site.name, by = "Code") %>% 
+  arrange(Cluster)
+kable(suggested.strata.Great_Wicomico, caption = "Suggested Strata")
+```
+
+##Add new suggested strata to current subgroups
+```{r}
+Great_Wicomico.dat <- dat.full %>% 
+  filter(River_name == "Great Wicomico River")
+Great_Wicomico.stations <- unique(Great_Wicomico.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+Great_Wicomico.site.info <- site.acres %>% 
+  filter(Station_ID %in% Great_Wicomico.stations) %>% 
+  arrange(Station_ID)
+
+# Separate out the station id and suggested strata
+suggested.strata.Great_Wicomico2 <- suggested.strata.Great_Wicomico[,1:2]
+colnames(suggested.strata.Great_Wicomico2) <- c("Station_ID", "Cluster")
+
+# convert the cluster to a character
+suggested.strata.Great_Wicomico2$Cluster <- as.character(suggested.strata.Great_Wicomico2$Cluster)
+
+# join to site info
+Great_Wicomico.site.info <- left_join(Great_Wicomico.site.info, suggested.strata.Great_Wicomico2)
+
+Great_Wicomico.site.info$Subgroup <- with( Great_Wicomico.site.info, ifelse( Subgroup == "GWNA", Cluster, Subgroup ) )
+
+Great_Wicomico.site.info$Station_ID <- as.numeric(Great_Wicomico.site.info$Station_ID)
+
+Great_Wicomico.site.info2 <- Great_Wicomico.site.info %>% 
+  group_by(Subgroup) %>% 
+  summarise(Acreage2 = sum(Acreage))
+
+Great_Wicomico.dat$Lives <- rowSums(Great_Wicomico.dat[,16:52]*Great_Wicomico.dat$Subsample_Factor)
+Great_Wicomico.dat$Markets <- rowSums(Great_Wicomico.dat[,31:52]*Great_Wicomico.dat$Subsample_Factor)
+Great_Wicomico.dat$Spat1 <- rowSums(Great_Wicomico.dat[,55:67]*Great_Wicomico.dat$Subsample_Factor)
+
+Great_Wicomico.dat <- Great_Wicomico.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+Great_Wicomico.dat <- left_join(Great_Wicomico.dat, Great_Wicomico.site.info)
+```
+
+```{r}
+Great_Wicomico.sites <- site.info %>%
+  filter(Station_ID %in% Great_Wicomico.stations) %>% 
+  select(Station_ID, Site)
+GW_sites2 <- Great_Wicomico.site.info %>% 
+  select(Station_ID, Subgroup)
+GW_sites2$Station_ID <- as.character(GW_sites2$Station_ID)
+Great_Wicomico.sites <- left_join(Great_Wicomico.sites, GW_sites2)
+Great_Wicomico.sites <- Great_Wicomico.sites %>% 
+  arrange(Subgroup)
+kable(Great_Wicomico.sites, caption = "Great_Wicomico Reef and Management Subgroup")
+```
+
+
+```{r}
+Great_Wicomico.strata <- data_frame("Strata" = Great_Wicomico.site.info2$Subgroup, NH = Great_Wicomico.site.info2$Acreage2*4046.86)
+#kable(head(Great_Wicomico.strata, 10))
+Great_Wicomico.numbers <- Stratify(Great_Wicomico.dat, Great_Wicomico.strata, "Subgroup", species = "Lives")
+kable(summary(Great_Wicomico.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3], caption = "Observed vs. Optimal Effort")
+```
+
+
+```{r}
+
+Great_Wicomico.numbers.summary <- summary(Great_Wicomico.numbers, effic = TRUE, nopt = TRUE)
+Great_Wicomico.numbers.nopt <- Great_Wicomico.numbers.summary$n.opt
+# Great_Wicomico.numbers.nopt
+Great_Wicomico.reallocation <- left_join(Great_Wicomico.numbers.nopt, site.info, by = c("Strata" = as.character("Management Subgroups")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+Great_Wicomico.full <- left_join(Great_Wicomico.dat, site.acres, by = "Station_ID")
+```
+
+
+##Estimate the population mean and variance given the new strata and allocation
+```{r}
+k <- length(unique(Great_Wicomico.dat$Subgroup))
+
+Great_Wicomico.dat3 <- Great_Wicomico.dat %>% 
+  select(1:6)
+
+varest.boot.dat.Great_Wicomico <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.Great_Wicomico) <- c("Subgroup", "MEAN", "SD", "VAR")
+varest.boot.dat.Great_Wicomico <- as.data.frame(varest.boot.dat.Great_Wicomico)
+n.opt.test.cumm.Great_Wicomico <- cumsum(summary(Great_Wicomico.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k])
+n.opt.test.Great_Wicomico <- summary(Great_Wicomico.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+start.pos.Great_Wicomico <- c(1, n.opt.test.cumm.Great_Wicomico[1:k-1]+1)
+
+nopt.boot.dat.Great_Wicomico <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.Great_Wicomico) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.Great_Wicomico <- as.data.frame(nopt.boot.dat.Great_Wicomico)
+j.start.Great_Wicomico <- seq(1,k*100, by = k)
+j.end.Great_Wicomico <- seq(k, k*100, by = k)
+
+subgroup.Great_Wicomico <- sort(unique(Great_Wicomico.dat3$Subgroup))
+
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.Great_Wicomico[k])
+  colnames(sub.dat1) <- names(Great_Wicomico.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- Great_Wicomico.dat3 %>% 
+      filter(Subgroup == subgroup.Great_Wicomico[i])
+    rand.n <- sample(1:nrow(temp),n.opt.test.Great_Wicomico[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.Great_Wicomico[i]:n.opt.test.cumm.Great_Wicomico[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(Subgroup) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.Great_Wicomico[j.start.Great_Wicomico[j]:j.end.Great_Wicomico[j],] <- sub.summary
+}
+#kable(head(varest.boot.dat.Great_Wicomico, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+Great_Wicomico.sample <- n.opt.test.Great_Wicomico
+Great_Wicomico.sample.cumm <- n.opt.test.cumm.Great_Wicomico
+
+Great_Wicomico.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(Great_Wicomico.plot.dat) <- c("ER","Subgroup", "MEAN")
+Great_Wicomico.plot.dat <- as.data.frame(Great_Wicomico.plot.dat)
+Great_Wicomico.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+Great_Wicomico.plot.dat$Subgroup <- rep(subgroup.Great_Wicomico, 1000)
+Great_Wicomico.plot.dat$Subgroup <- factor(Great_Wicomico.plot.dat$Subgroup)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+Great_Wicomico.sub.sample <- Great_Wicomico.sample/sum(Great_Wicomico.sample)
+Great_Wicomico.sub.cumm <- round(seq(1, 0.1, by = -0.1)*Great_Wicomico.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("Subgroup", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(Great_Wicomico.sub.sample*Great_Wicomico.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = Great_Wicomico.sub.cumm[h])
+    colnames(sub.dat1) <- names(Great_Wicomico.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- Great_Wicomico.dat3 %>% 
+        filter(Subgroup == subgroup.Great_Wicomico[i])
+      rand.n <- sample(1:nrow(temp),round(Great_Wicomico.sub.sample[i]*Great_Wicomico.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(Subgroup) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  Great_Wicomico.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+#kable(head(Great_Wicomico.plot.dat, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+ggplot(Great_Wicomico.plot.dat, aes(y = MEAN, x = ER, colour = Subgroup, fill = Subgroup)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+
+```{r}
+strat.kmeans.summary.Great_Wicomico <- Great_Wicomico.dat3 %>% 
+  group_by(Subgroup) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.Great_Wicomico, caption = "Population Stats based on all data")
+
+Great_Wicomico.ci.summary <- Great_Wicomico.plot.dat %>% 
+  group_by(ER, Subgroup) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN)
+#kable(Great_Wicomico.ci.summary, caption = "Mean of the means")
+```
+
+Based on the information above, it appears that the total effort in the Great_Wicomico could be reduced by 40% and still obtain similar population parameters. Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+kable(data_frame("Management Subgroup" = strat.kmeans.summary.Great_Wicomico$Subgroup, 
+                 "Future Effort" = round(Great_Wicomico.sub.sample*Great_Wicomico.sub.cumm[5]/13,0),
+                 "Current Effort" = round(summary(Great_Wicomico.numbers, effic = T, nopt = T)$n.opt[,2][1:7]/13,0)))
+```
+
+This would mean a total of 92 grabs in the Great Wicomico compared to 156 in previous years. 
+
+
+#Chesapeake Bay
+
+All reefs in the Chesapeake Bay region fall within predefined management subgroups. 
+
+```{r}
+Chesapeake.dat <- dat.full %>% 
+  filter(River_name == "Chesapeake Bay")
+Chesapeake.stations <- unique(Chesapeake.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+Chesapeake.site.info <- site.acres %>% 
+  filter(Station_ID %in% Chesapeake.stations) %>% 
+  arrange(Station_ID)
+Chesapeake.site.info$Station_ID <- as.numeric(Chesapeake.site.info$Station_ID)
+Chesapeake.site.info2 <- Chesapeake.site.info %>% 
+  group_by(Subgroup) %>% 
+  summarise(Acreage2 = sum(Acreage))
+
+Chesapeake.dat$Lives <- rowSums(Chesapeake.dat[,16:52]*Chesapeake.dat$Subsample_Factor)
+Chesapeake.dat$Markets <- rowSums(Chesapeake.dat[,31:52]*Chesapeake.dat$Subsample_Factor)
+Chesapeake.dat$Spat1 <- rowSums(Chesapeake.dat[,55:67]*Chesapeake.dat$Subsample_Factor)
+
+Chesapeake.dat <- Chesapeake.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+Chesapeake.dat <- left_join(Chesapeake.dat, Chesapeake.site.info)
+```
+
+##Set up strata and summarize
+
+```{r}
+Chesapeake.sites <- site.info %>%
+  filter(Station_ID %in% Chesapeake.stations) %>% 
+  select(Station_ID, Site, `Management Subgroups`) %>% 
+  arrange(`Management Subgroups`)
+kable(Chesapeake.sites, caption = "Chesapeake Reef and Management Subgroup")
+```
+
+
+```{r}
+Chesapeake.strata <- data_frame("Strata" = Chesapeake.site.info2$Subgroup, NH = Chesapeake.site.info2$Acreage2*4046.86)
+#kable(head(Chesapeake.strata, 10))
+Chesapeake.numbers <- Stratify(Chesapeake.dat, Chesapeake.strata, "Subgroup", species = "Lives")
+kable(summary(Chesapeake.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3], caption = "Observed vs. Optimal Effort")
+```
+
+
+```{r}
+
+Chesapeake.numbers.summary <- summary(Chesapeake.numbers, effic = TRUE, nopt = TRUE)
+Chesapeake.numbers.nopt <- Chesapeake.numbers.summary$n.opt
+# Chesapeake.numbers.nopt
+Chesapeake.reallocation <- left_join(Chesapeake.numbers.nopt, site.info, by = c("Strata" = as.character("Management Subgroups")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+Chesapeake.full <- left_join(Chesapeake.dat, site.acres, by = "Station_ID")
+```
+
+##Estimate the population mean and variance given the new strata and allocation
+```{r}
+k <- length(unique(Chesapeake.dat$Subgroup))
+
+Chesapeake.dat3 <- Chesapeake.dat %>% 
+  select(1:6)
+
+varest.boot.dat.Chesapeake <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.Chesapeake) <- c("Subgroup", "MEAN", "SD", "VAR")
+varest.boot.dat.Chesapeake <- as.data.frame(varest.boot.dat.Chesapeake)
+n.opt.test.cumm.Chesapeake <- cumsum(summary(Chesapeake.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k])
+n.opt.test.Chesapeake <- summary(Chesapeake.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+start.pos.Chesapeake <- c(1, n.opt.test.cumm.Chesapeake[1:k-1]+1)
+
+nopt.boot.dat.Chesapeake <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.Chesapeake) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.Chesapeake <- as.data.frame(nopt.boot.dat.Chesapeake)
+j.start.Chesapeake <- seq(1,k*100, by = k)
+j.end.Chesapeake <- seq(k, k*100, by = k)
+
+subgroup.Chesapeake <- sort(unique(Chesapeake.dat3$Subgroup))
+
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.Chesapeake[k])
+  colnames(sub.dat1) <- names(Chesapeake.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- Chesapeake.dat3 %>% 
+      filter(Subgroup == subgroup.Chesapeake[i])
+    rand.n <- sample(1:nrow(temp),n.opt.test.Chesapeake[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.Chesapeake[i]:n.opt.test.cumm.Chesapeake[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(Subgroup) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.Chesapeake[j.start.Chesapeake[j]:j.end.Chesapeake[j],] <- sub.summary
+}
+#kable(head(varest.boot.dat.Chesapeake, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+Chesapeake.sample <- n.opt.test.Chesapeake
+Chesapeake.sample.cumm <- n.opt.test.cumm.Chesapeake
+
+Chesapeake.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(Chesapeake.plot.dat) <- c("ER","Subgroup", "MEAN")
+Chesapeake.plot.dat <- as.data.frame(Chesapeake.plot.dat)
+Chesapeake.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+Chesapeake.plot.dat$Subgroup <- rep(subgroup.Chesapeake, 1000)
+Chesapeake.plot.dat$Subgroup <- factor(Chesapeake.plot.dat$Subgroup)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+Chesapeake.sub.sample <- Chesapeake.sample/sum(Chesapeake.sample)
+Chesapeake.sub.cumm <- round(seq(1, 0.1, by = -0.1)*Chesapeake.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("Subgroup", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(Chesapeake.sub.sample*Chesapeake.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = Chesapeake.sub.cumm[h])
+    colnames(sub.dat1) <- names(Chesapeake.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- Chesapeake.dat3 %>% 
+        filter(Subgroup == subgroup.Chesapeake[i])
+      rand.n <- sample(1:nrow(temp),round(Chesapeake.sub.sample[i]*Chesapeake.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(Subgroup) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  Chesapeake.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+#kable(head(Chesapeake.plot.dat, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+ggplot(Chesapeake.plot.dat, aes(y = MEAN, x = ER, colour = Subgroup, fill = Subgroup)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+
+```{r}
+strat.kmeans.summary.Chesapeake <- Chesapeake.dat3 %>% 
+  group_by(Subgroup) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.Chesapeake, caption = "Population Stats based on all data")
+
+Chesapeake.ci.summary <- Chesapeake.plot.dat %>% 
+  group_by(ER, Subgroup) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN)
+#kable(Chesapeake.ci.summary, caption = "Mean of the means")
+```
+
+Based on the information above, it appears that the total effort in the Chesapeake could be reduced by 40% and still obtain similar population parameters. Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+kable(data_frame("Subgroup" = subgroup.Chesapeake, "Future Effort" = c(25,3,6),
+                 "Current Effort" = round(summary(Chesapeake.numbers, effic = T, nopt = T)$n.opt[,2][1:3]/13,0)))
+```
+
+This would mean a total of 34 grabs in the Chesapeake compared to 52 in previous years.
+
+#Tangier and Pocomoke Sounds
+
+Tangier and Pocomoke reefs are also entirely within management subgroups.
+
+```{r}
+Tangier.dat <- dat.full %>% 
+  filter(River_name == "Tangier Sound")
+old.sites <- c(1116, 1117, 1118, 1119, 1120, 1204, 1205, 1206)
+Tangier.dat <- filter(Tangier.dat, !Station_ID %in% old.sites)
+Tangier.stations <- unique(Tangier.dat$Station_ID)
+colnames(site.info)[2] <- "Station_ID"
+colnames(site.acres)[1] <- "Station_ID"
+Tangier.site.info <- site.acres %>% 
+  filter(Station_ID %in% Tangier.stations) %>% 
+  arrange(Station_ID)
+Tangier.site.info$Station_ID <- as.numeric(Tangier.site.info$Station_ID)
+Tangier.site.info2 <- Tangier.site.info %>% 
+  group_by(Subgroup) %>% 
+  summarise(Acreage2 = sum(Acreage))
+
+Tangier.dat$Lives <- rowSums(Tangier.dat[,16:52]*Tangier.dat$Subsample_Factor)
+Tangier.dat$Markets <- rowSums(Tangier.dat[,31:52]*Tangier.dat$Subsample_Factor)
+Tangier.dat$Spat1 <- rowSums(Tangier.dat[,55:67]*Tangier.dat$Subsample_Factor)
+
+Tangier.dat <- Tangier.dat %>% select(Station_ID, Sample_ID, Lives, Markets, Spat1)
+Tangier.dat <- left_join(Tangier.dat, Tangier.site.info)
+```
+
+##Set up strata and summarize
+
+```{r}
+Tangier.sites <- site.info %>%
+  filter(Station_ID %in% Tangier.stations) %>% 
+  select(Station_ID, Site, `Management Subgroups`) %>% 
+  arrange(`Management Subgroups`)
+kable(Tangier.sites, caption = "Tangier Reef and Management Subgroup")
+```
+
+
+```{r}
+Tangier.strata <- data_frame("Strata" = Tangier.site.info2$Subgroup, NH = Tangier.site.info2$Acreage2*4046.86)
+#kable(head(Tangier.strata, 10))
+Tangier.numbers <- Stratify(Tangier.dat, Tangier.strata, "Subgroup", species = "Lives")
+kable(summary(Tangier.numbers, effic = TRUE, nopt = TRUE)$n.opt[,1:3], caption = "Observed vs. Optimal Effort")
+```
+
+
+```{r}
+
+Tangier.numbers.summary <- summary(Tangier.numbers, effic = TRUE, nopt = TRUE)
+Tangier.numbers.nopt <- Tangier.numbers.summary$n.opt
+# Tangier.numbers.nopt
+Tangier.reallocation <- left_join(Tangier.numbers.nopt, site.info, by = c("Strata" = as.character("Management Subgroups")))
+
+site.acres$Station_ID <- as.numeric(site.acres$Station_ID)
+Tangier.full <- left_join(Tangier.dat, site.acres, by = "Station_ID")
+```
+
+
+##Estimate the population mean and variance given the new strata and allocation
+```{r}
+k <- length(unique(Tangier.dat$Subgroup))
+
+Tangier.dat3 <- Tangier.dat %>% 
+  select(1:6)
+
+varest.boot.dat.Tangier <- matrix(ncol = 4, nrow = k*100)
+colnames(varest.boot.dat.Tangier) <- c("Subgroup", "MEAN", "SD", "VAR")
+varest.boot.dat.Tangier <- as.data.frame(varest.boot.dat.Tangier)
+n.opt.test.cumm.Tangier <- cumsum(summary(Tangier.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k])
+n.opt.test.Tangier <- summary(Tangier.numbers, effic = T, nopt = T)$n.opt$Optimal[1:k]
+
+start.pos.Tangier <- c(1, n.opt.test.cumm.Tangier[1:k-1]+1)
+
+nopt.boot.dat.Tangier <- matrix(ncol = 7, nrow = k*100)
+colnames(nopt.boot.dat.Tangier) <- c("Strata", "Observed", "Optimal", "Perc.Increase.Var.Opt",
+                             "Compromise", "Perc.Increase.Var.comp", "run")
+nopt.boot.dat.Tangier <- as.data.frame(nopt.boot.dat.Tangier)
+j.start.Tangier <- seq(1,k*100, by = k)
+j.end.Tangier <- seq(k, k*100, by = k)
+
+subgroup.Tangier <- sort(unique(Tangier.dat3$Subgroup))
+
+for(j in 1:100) {
+  sub.dat1 <- matrix(ncol=6,nrow = n.opt.test.cumm.Tangier[k])
+  colnames(sub.dat1) <- names(Tangier.dat3)
+  sub.dat1 <- as.data.frame(sub.dat1)
+  
+  for(i in 1:k) {
+    temp <- Tangier.dat3 %>% 
+      filter(Subgroup == subgroup.Tangier[i])
+    rand.n <- sample(1:nrow(temp),n.opt.test.Tangier[i], replace = T)
+    temp2 <- temp[rand.n,]
+    sub.dat1[start.pos.Tangier[i]:n.opt.test.cumm.Tangier[i],] <- temp2
+  }
+  
+  sub.summary <- sub.dat1 %>% 
+    group_by(Subgroup) %>% 
+    summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+  varest.boot.dat.Tangier[j.start.Tangier[j]:j.end.Tangier[j],] <- sub.summary
+}
+#kable(head(varest.boot.dat.Tangier, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+Tangier.sample <- n.opt.test.Tangier
+Tangier.sample.cumm <- n.opt.test.cumm.Tangier
+
+Tangier.plot.dat <- matrix(ncol = 3, nrow = k*1000)
+colnames(Tangier.plot.dat) <- c("ER","Subgroup", "MEAN")
+Tangier.plot.dat <- as.data.frame(Tangier.plot.dat)
+Tangier.plot.dat$ER <- rep(seq(0, 0.9, 0.1), each = k*100)
+Tangier.plot.dat$Subgroup <- rep(subgroup.Tangier, 1000)
+Tangier.plot.dat$Subgroup <- factor(Tangier.plot.dat$Subgroup)
+
+h.start <- seq(1, 1+(k*1000 - k*100), by = k*100)
+h.end <- seq(k*100, k*1000, by = k*100)
+
+Tangier.sub.sample <- Tangier.sample/sum(Tangier.sample)
+Tangier.sub.cumm <- round(seq(1, 0.1, by = -0.1)*Tangier.sample.cumm[k], 0)
+
+j.start <- seq(1,k*100, by = k)
+j.end <- seq(k, k*100, by = k)
+
+for(h in 1:10){
+
+  varest.boot.dat <- matrix(ncol = 4, nrow = k*100)
+  colnames(varest.boot.dat) <- c("Subgroup", "MEAN", "SD", "VAR")
+  varest.boot.dat <- as.data.frame(varest.boot.dat)
+
+  sample.cumm <- cumsum(round(Tangier.sub.sample*Tangier.sub.cumm[h],0))
+  start.pos <- c(1, sample.cumm[1:k-1]+1)
+
+  for(j in 1:100) {
+    sub.dat1 <- matrix(ncol=6, nrow = Tangier.sub.cumm[h])
+    colnames(sub.dat1) <- names(Tangier.dat3)
+    sub.dat1 <- as.data.frame(sub.dat1)
+    
+    for(i in 1:k) {
+      temp <- Tangier.dat3 %>% 
+        filter(Subgroup == subgroup.Tangier[i])
+      rand.n <- sample(1:nrow(temp),round(Tangier.sub.sample[i]*Tangier.sub.cumm[h],0), replace = T)
+      temp2 <- temp[rand.n,]
+      sub.dat1[start.pos[i]:sample.cumm[i],] <- temp2
+    }
+    
+    sub.summary <- sub.dat1 %>% 
+      group_by(Subgroup) %>% 
+      summarise("MEAN" = mean(Lives), "SD" = sd(Lives), "VAR" = var(Lives))
+    varest.boot.dat[j.start[j]:j.end[j],] <- sub.summary
+  }
+  Tangier.plot.dat$MEAN[h.start[h]:h.end[h]] <- varest.boot.dat$MEAN
+}
+#kable(head(Tangier.plot.dat, 10), caption = "Population mean for each strata with a random resampling with new effort")
+```
+
+```{r}
+ggplot(Tangier.plot.dat, aes(y = MEAN, x = ER, colour = Subgroup, fill = Subgroup)) +
+  geom_smooth(se = FALSE) +
+  geom_point(size = 2) +
+  stat_summary(fun.data = mean_ci, geom = "ribbon", alpha = 0.5) +
+  theme_light() + 
+  theme(axis.text = element_text(size = 15, colour = "black")) + 
+  theme(axis.title = element_text(size = 15)) + 
+  theme(legend.text = element_text(size = 15)) +
+  theme(legend.title = element_text(size = 15)) +
+  labs(y = expression(paste("Mean Oysters m"^-2 %+-% "CI"))) +
+  labs(x = "Proportional Effort Reduction")
+```
+
+
+```{r}
+strat.kmeans.summary.Tangier <- Tangier.dat3 %>% 
+  group_by(Subgroup) %>% 
+  summarise(pMEAN = mean(Lives), pSD = sd(Lives), pVAR = var(Lives), nOBS = n()) %>% 
+  mutate(lower.ci.mean = pMEAN - qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)),
+         upper.ci.mean = pMEAN + qt(1 - (0.05 / 2), nOBS) * (pSD/sqrt(nOBS)))
+kable(strat.kmeans.summary.Tangier, caption = "Population Stats based on all data")
+
+Tangier.ci.summary <- Tangier.plot.dat %>% 
+  group_by(ER, Subgroup) %>% 
+  summarise(m.MEAN = mean(MEAN), sd.MEAN = sd(MEAN)) %>% 
+  mutate(lower.ci.mean = m.MEAN - qt(1 - (0.05 / 2), 99) * sd.MEAN,
+         upper.ci.mean = m.MEAN + qt(1 - (0.05 / 2), 99) * sd.MEAN)
+# kable(Tangier.ci.summary, caption = "Mean of the means")
+```
+
+Based on the information above, it appears that the total effort in Tangier/Pocomoke Sound could be reduced by 40%, except within the sanctuary and still obtain similar population parameters. Each year, total effort (i.e., number of grabs) in each cluster would be as follows:
+```{r}
+kable(data_frame("Subgroup" = strat.kmeans.summary.Tangier$Subgroup, 
+                 "Future Effort" = c( round(Tangier.sub.sample[1:4]*Tangier.sub.cumm[5]/13,0), 7),
+                 "Current Effort" = round(summary(Tangier.numbers, effic = T, nopt = T)$n.opt[,2][1:5]/13,0)))
+```
+
+This would mean a total of 108 grabs in the Tangier compared to 168 in previous years. 
+
+
+#Total Effort
+
+If we allocate effort the way that I've shown and described above, here is what it would look like overall:
+```{r}
+rivers <- c(unique(dat.full$River_name))
+rivers <- rivers[1:8]
+effort <- c(34, 234, 74, 321, 92, 63, 108, 72)
+total.effort <- data_frame("River Name" = rivers, "Number of Grabs" = effort)
+total.effort <- arrange(total.effort, `River Name`)
+total.effort <- add_row(total.effort, `River Name` = "Total", `Number of Grabs` = sum(total.effort$`Number of Grabs`))
+kable(total.effort)
+```
+
+In 2018, there were a total of 1,753 grabs, making this just over a 40% reduction in total effort around the Bay.
